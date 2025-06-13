@@ -49,6 +49,31 @@ def fix_links(md_text, base_url):
 
     return re.sub(pattern, repl, md_text)
 
+def generate_recent_posts_page(all_pages, output_dir):
+    """
+    Son yazılar listesini oluşturur ve 'neler-yeni.html' olarak yazar.
+    all_pages: [{'title': ..., 'url': ..., 'mod_time': datetime}]
+    """
+    from datetime import datetime
+
+    # En yeni 20 dosya
+    sorted_pages = sorted(all_pages, key=lambda x: x["mod_time"], reverse=True)[:20]
+
+    html = "<h1>Son Yazılar</h1>\n<ul>\n"
+    for page in sorted_pages:
+        # Tarihi Türkçe biçimlendirelim (gerekirse farklı yapabiliriz)
+        date_str = page["mod_time"].strftime("%d %B %Y, %H:%M")
+        html += f'  <li><a href="{page["url"]}">{page["title"]}</a> <small>({date_str})</small></li>\n'
+    html += "</ul>\n"
+
+    full_html = generate_html_page("Son Yazılar", html, base_url="")
+
+    output_path = os.path.join(output_dir, "neler-yeni.html")
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(full_html)
+
+    print(f"✔ Son yazılar sayfası oluşturuldu: {output_path}")
+
 # Yeni fonksiyon: Renk kodlarını span'a çevirir
 def convert_colors_to_circles(text):
     """
@@ -123,6 +148,7 @@ def process_markdown_file(input_path, output_path):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(full_html)
+
 def copy_assets():
     """
     style.css varsa doğrudan çıktı dizinine kopyala.
@@ -141,8 +167,11 @@ def slug_to_title(slug):
 
 # --- build_static_site fonksiyonu ---
 def build_static_site():
+    from datetime import datetime
+
     print("Statik site oluşturuluyor...\n")
     PAGE_SIZE = 20  # Sayfa başına gösterilecek dosya sayısı
+    all_pages = []
 
     # Türkçe locale ayarını burada yapıyoruz
     try:
@@ -166,7 +195,7 @@ def build_static_site():
                     print("Varsayılan sistem yerel ayarı kullanılıyor.")
                 except locale.Error as e_default:
                     print(f"HATA: Varsayılan yerel ayar da ayarlanamadı: {e_default}. Çıkış yapılıyor.")
-                    return # Locale ayarlanamazsa devam etmemek en iyisi
+                    return  # Locale ayarlanamazsa devam etmemek en iyisi
 
     # Çıktı dizinini temizle (isteğe bağlı ama önerilir)
     if os.path.exists(OUTPUT_DIR):
@@ -206,8 +235,17 @@ def build_static_site():
 
                 # process_markdown_file'a artık başlığı doğrudan göndermiyoruz,
                 # çünkü o fonksiyon başlığı kendi içinde buluyor veya türetiyor.
-                process_markdown_file(full_input, output_path) 
+                process_markdown_file(full_input, output_path)
 
+                # Son yazılar listesi için bilgiyi kaydet
+                mod_time = datetime.fromtimestamp(os.path.getmtime(full_input))
+                rel_output_url = os.path.relpath(output_path, OUTPUT_DIR).replace("\\", "/")
+                all_pages.append({
+                    "title": current_file_title,
+                    "url": rel_output_url,
+                    "mod_time": mod_time
+                })
+ 
                 html_files_in_dir.append({
                     "filename": html_file_name,
                     "title": current_file_title # Burada çekilen başlığı kullan
@@ -273,9 +311,10 @@ def build_static_site():
 
                 print(f"Dizin sayfası oluşturuldu: {index_output_path}")
 
+    generate_recent_posts_page(all_pages, OUTPUT_DIR)
+
     copy_assets()
     print(f"\nTüm site başarıyla '{OUTPUT_DIR}' klasörüne yazıldı.")
 
 if __name__ == "__main__":
     build_static_site()
-
