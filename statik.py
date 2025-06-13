@@ -115,6 +115,8 @@ def process_markdown_file(input_path, output_path):
     md_fixed_links = fix_links(md_with_circles, base_url) 
 
     html_content = markdown.markdown(md_fixed_links, extensions=["fenced_code", "tables"])
+    if extracted_title:
+        html_content = f"<h1>{extracted_title}</h1>\n" + html_content
     
     full_html = generate_html_page(extracted_title, html_content, base_url=base_url)
 
