@@ -4,6 +4,7 @@ import shutil
 import markdown
 import locale
 from jinja2 import Environment, FileSystemLoader
+from datetime import datetime
 
 # Tema klasörünün yolu (örneğin "templates" klasörünü kullanabilirsin)
 TEMPLATE_FOLDER = ""
@@ -11,6 +12,8 @@ TEMPLATE_FOLDER = ""
 # İçerik ve çıktı dizinleri
 CONTENT_DIR = "Icerik"
 OUTPUT_DIR = "public"
+ASSETS_DIR = os.path.join(CONTENT_DIR, "resimler") # İçerik klasörü içindeki resimler
+ASSETS_OUTPUT_DIR = os.path.join(OUTPUT_DIR, "resimler") # Public klasörü içindeki resimler
 
 # Jinja2 ortamını kuruyoruz
 env = Environment(loader=FileSystemLoader(TEMPLATE_FOLDER))
@@ -31,21 +34,31 @@ def get_base_url(output_path):
 def fix_links(md_text, base_url):
     """
     Markdown içindeki linkleri .html'ye çevirir ve base_url prefix'i ekler.
+    Ayrıca resim linklerini de (örn: /resimler/image.jpg) düzeltir.
     Örnek:
       [Elmas Evi](/stadyum/elmas-evi) → [Elmas Evi](../stadyum/elmas-evi.html)
+      ![Görsel](/resimler/foto.jpg) -> ![Görsel](../resimler/foto.jpg)
     """
-    pattern = r'\((/[^)]+)\)'
+    # Linkler ve resimler için genel bir regex deseni
+    # Hem [text](link) hem de ![alt text](image_src) yakalar
+    # capture group 1: tam url (örn: /stadyum/elmas-evi veya /resimler/foto.jpg)
+    pattern = r'(!?\[[^\]]*\])\((/[^)]+)\)'
 
     def repl(match):
-        url = match.group(1)
-        if url.endswith(".md"):
+        full_match_prefix = match.group(1) # ![alt text] veya [text]
+        url = match.group(2) # /stadyum/elmas-evi veya /resimler/foto.jpg
+
+        if url.startswith("/resimler/") or url.startswith("/assets/"): # Resim veya genel assetler için
+            # Resim linkleri için sadece base_url ekle, .html uzantısı ekleme
+            return f'{full_match_prefix}({base_url}{url[1:]})'
+        elif url.endswith(".md"):
             url = url[:-3] + ".html"
         elif not url.endswith(".html") and not url.startswith("http"):
             url += ".html"
 
         if url.startswith("/"):
             url = base_url + url[1:]
-        return f"({url})"
+        return f'{full_match_prefix}({url})'
 
     return re.sub(pattern, repl, md_text)
 
@@ -54,8 +67,6 @@ def generate_recent_posts_page(all_pages, output_dir):
     Son yazılar listesini oluşturur ve 'neler-yeni.html' olarak yazar.
     all_pages: [{'title': ..., 'url': ..., 'mod_time': datetime}]
     """
-    from datetime import datetime
-
     # En yeni 20 dosya
     sorted_pages = sorted(all_pages, key=lambda x: x["mod_time"], reverse=True)[:20]
 
@@ -74,22 +85,12 @@ def generate_recent_posts_page(all_pages, output_dir):
 
     print(f"✔ Son yazılar sayfası oluşturuldu: {output_path}")
 
-# Yeni fonksiyon: Renk kodlarını span'a çevirir
 def convert_colors_to_circles(text):
     """
     Belirli renk kodlarını (HEX formatında) bulur ve onları
     .color-circle sınıfına sahip <span> etiketlerine dönüştürür.
     Örnek: #7D7D7D -> <span class="color-circle" style="background-color: #7D7D7D;"></span>
     """
-    # Renk kodlarını bulan regex (örnekte verilenler ve genel HEX renk kodları)
-    # Renk kodlarını doğrudan belirtilen liste üzerinden veya genel regex ile bulabiliriz.
-    # Genel HEX renk kodu regex'i: #(?:[0-9a-fA-F]{3}){1,2}\b
-    
-    # Senin listende belirtilen renkler:
-    # #7D7D7D, #8B4513, #6B8E23
-    
-    # regex pattern'ı daha spesifik yapabiliriz veya genel bir HEX regex'i kullanabiliriz
-    # Genel bir HEX renk kodunu yakalamak için:
     color_pattern = r'#(?:[0-9a-fA-F]{3}){1,2}\b'
 
     def replacer(match):
@@ -109,6 +110,8 @@ def process_markdown_file(input_path, output_path):
     Markdown dosyasını okuyup HTML'ye çevirir, çıktı dosyasına yazar.
     Başlığı markdown dosyasının ilk satırındaki H1 etiketinden çeker.
     Renk kodlarını span'lara dönüştürür.
+    Başlık bilgisi, hem Jinja2 şablonuna 'title' olarak gönderilir
+    hem de Markdown içeriğinin içinde kalır.
     """
     with open(input_path, "r", encoding="utf-8") as f:
         md_content = f.read()
@@ -116,33 +119,31 @@ def process_markdown_file(input_path, output_path):
     # Başlığı markdown dosyasının ilk H1 başlığından çekmeye çalış
     lines = md_content.splitlines()
     extracted_title = None
+    
+    # Markdown içeriğinin başında bir başlık olup olmadığını kontrol et
+    # Bu başlığı sadece Jinja2 şablonuna göndermek için çekiyoruz,
+    # Markdown içeriğinden silmiyoruz!
     if lines:
         first_line = lines[0].strip()
         if first_line.startswith('#'):
             extracted_title = first_line.lstrip('#').strip()
-            md_content_without_title = "\n".join(lines[1:])
-        else:
-            md_content_without_title = md_content
-    else:
-        md_content_without_title = "" # Dosya boşsa
-
+    
+    # Eğer Markdown içinde başlık yoksa veya çekilemediyse, dosya adından türet
     if not extracted_title:
         extracted_title = slug_to_title(os.path.splitext(os.path.basename(input_path))[0])
-        md_to_convert = md_content
-    else:
-        md_to_convert = md_content_without_title
-    
-    # Renk kodlarını HTML span'larına dönüştür
-    md_with_circles = convert_colors_to_circles(md_to_convert)
+
+    # Renk kodlarını HTML span'larına dönüştür (tüm md_content üzerinde)
+    md_with_circles = convert_colors_to_circles(md_content)
 
     base_url = get_base_url(output_path)
-    # Link düzeltmeleri de renk dönüşümünden sonra yapılmalı
+    # Link düzeltmeleri de renk dönüşümünden sonra yapılmalı (tüm md_content üzerinde)
     md_fixed_links = fix_links(md_with_circles, base_url) 
 
+    # Markdown'ı HTML'e çevir. Başlık zaten md_content içinde olduğu için
+    # markdown kütüphanesi onu doğru şekilde <h1> olarak işleyecektir.
     html_content = markdown.markdown(md_fixed_links, extensions=["fenced_code", "tables"])
-    if extracted_title:
-        html_content = f"<h1>{extracted_title}</h1>\n" + html_content
     
+    # Jinja2 şablonunu render ederken başlık değişkenini kullan
     full_html = generate_html_page(extracted_title, html_content, base_url=base_url)
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -151,12 +152,35 @@ def process_markdown_file(input_path, output_path):
 
 def copy_assets():
     """
-    style.css varsa doğrudan çıktı dizinine kopyala.
+    style.css, ASSETS_DIR içindeki tüm dosyaları ve .htaccess dosyasını çıktı dizinine kopyalar.
     """
+    print("\nStatik dosyalar kopyalanıyor...")
+
+    # style.css kopyalama
     if os.path.exists("style.css"):
         shutil.copy("style.css", os.path.join(OUTPUT_DIR, "style.css"))
+        print("✔ 'style.css' kopyalandı.")
     else:
-        print("UYARI: style.css dosyası bulunamadı!")
+        print("UYARI: 'style.css' dosyası bulunamadı!")
+
+    # ASSETS_DIR içindeki tüm dosyaları kopyalama
+    if os.path.exists(ASSETS_DIR):
+        if os.path.exists(ASSETS_OUTPUT_DIR):
+            shutil.rmtree(ASSETS_OUTPUT_DIR) # Hedef dizini temizle
+        shutil.copytree(ASSETS_DIR, ASSETS_OUTPUT_DIR)
+        print(f"✔ '{ASSETS_DIR}' klasörü '{ASSETS_OUTPUT_DIR}' olarak kopyalandı.")
+    else:
+        print(f"UYARI: '{ASSETS_DIR}' klasörü bulunamadı, resimler kopyalanamadı.")
+
+    # .htaccess dosyasını kopyalama
+    htaccess_source = os.path.join(CONTENT_DIR, ".htaccess")
+    htaccess_destination = os.path.join(OUTPUT_DIR, ".htaccess")
+    if os.path.exists(htaccess_source):
+        shutil.copy(htaccess_source, htaccess_destination)
+        print(f"✔ '{htaccess_source}' dosyası '{htaccess_destination}' olarak kopyalandı.")
+    else:
+        print(f"UYARI: '{htaccess_source}' dosyası bulunamadı, kopyalanamadı.")
+
 
 def slug_to_title(slug):
     """
@@ -167,8 +191,6 @@ def slug_to_title(slug):
 
 # --- build_static_site fonksiyonu ---
 def build_static_site():
-    from datetime import datetime
-
     print("Statik site oluşturuluyor...\n")
     PAGE_SIZE = 20  # Sayfa başına gösterilecek dosya sayısı
     all_pages = []
@@ -199,12 +221,26 @@ def build_static_site():
 
     # Çıktı dizinini temizle (isteğe bağlı ama önerilir)
     if os.path.exists(OUTPUT_DIR):
-        shutil.rmtree(OUTPUT_DIR)
-        print(f"'{OUTPUT_DIR}' dizini temizlendi.")
-    os.makedirs(OUTPUT_DIR)
-    print(f"'{OUTPUT_DIR}' dizini oluşturuldu.")
+        for item in os.listdir(OUTPUT_DIR):
+            item_path = os.path.join(OUTPUT_DIR, item)
+            # .htaccess'i ve style.css'i de silmemek için kontrol ekledik
+            if os.path.isdir(item_path) and item != os.path.basename(ASSETS_OUTPUT_DIR):
+                shutil.rmtree(item_path)
+            elif os.path.isfile(item_path) and item not in ["style.css", ".htaccess"]: 
+                os.remove(item_path)
+        print(f"'{OUTPUT_DIR}' dizini içeriği temizlendi.")
+    else:
+        os.makedirs(OUTPUT_DIR)
+        print(f"'{OUTPUT_DIR}' dizini oluşturuldu.")
 
     for root, dirs, files in os.walk(CONTENT_DIR):
+        # 'resimler' klasörünü walk etmeyi atla
+        if os.path.basename(root) == os.path.basename(ASSETS_DIR):
+            continue
+        # Ayrıca ana CONTENT_DIR'dayken .htaccess dosyasını da pas geç, çünkü onu manuel kopyalayacağız.
+        if root == CONTENT_DIR and ".htaccess" in files:
+            files.remove(".htaccess")
+
         html_files_in_dir = []
 
         for file in files:
@@ -217,11 +253,10 @@ def build_static_site():
 
                 print(f"İçerik: {rel_path} → Çıktı: {output_path}")
                 
-                # Markdown dosyasını oku ve başlığı çek
+                # Markdown dosyasını oku ve başlığı çek (sadece Jinja2 için)
                 with open(full_input, "r", encoding="utf-8") as f:
                     md_content_for_title_extract = f.read()
                 
-                # Başlığı çekmek için özel mantık
                 lines_for_title = md_content_for_title_extract.splitlines()
                 current_file_title = None
                 if lines_for_title:
@@ -229,12 +264,9 @@ def build_static_site():
                     if first_line_for_title.startswith('#'):
                         current_file_title = first_line_for_title.lstrip('#').strip()
                 
-                # Eğer markdown içinden başlık çekilemediyse, dosya adından türet
                 if not current_file_title:
                     current_file_title = slug_to_title(os.path.splitext(file)[0])
 
-                # process_markdown_file'a artık başlığı doğrudan göndermiyoruz,
-                # çünkü o fonksiyon başlığı kendi içinde buluyor veya türetiyor.
                 process_markdown_file(full_input, output_path)
 
                 # Son yazılar listesi için bilgiyi kaydet
@@ -245,7 +277,7 @@ def build_static_site():
                     "url": rel_output_url,
                     "mod_time": mod_time
                 })
- 
+    
                 html_files_in_dir.append({
                     "filename": html_file_name,
                     "title": current_file_title # Burada çekilen başlığı kullan
@@ -260,7 +292,12 @@ def build_static_site():
 
             current_output_subdir = os.path.relpath(root, CONTENT_DIR).replace("\\", "/")
             if current_output_subdir == ".":
-                current_output_subdir = ""
+                # Ana dizin için başlık 'Ana Dizin' veya sitenin adı olabilir.
+                # Burada sadece 'Ana Dizin' olarak bırakıyorum.
+                dir_display_name = 'Ana Dizin' 
+            else:
+                # Alt dizinler için klasör adını başlık olarak kullan
+                dir_display_name = slug_to_title(os.path.basename(current_output_subdir))
 
             def build_pagination_html(current_page, total_pages, base_url_for_pagination):
                 pagination_html = '<div class="pagination">\n'
@@ -288,7 +325,8 @@ def build_static_site():
                 end_idx = start_idx + PAGE_SIZE
                 page_items = html_files_in_dir[start_idx:end_idx]
 
-                index_items_html = "<ul>\n"
+                # Başlık ve liste içeriğini birleştir
+                index_items_html = f"<h2>{dir_display_name}</h2>\n<ul>\n" # Buraya h2 etiketi eklendi
                 for f in page_items:
                     index_items_html += f'  <li><a href="{f["filename"]}">{f["title"]}</a></li>\n'
                 index_items_html += "</ul>"
@@ -299,11 +337,10 @@ def build_static_site():
                 base_url_for_pagination = get_base_url(index_output_path)
                 index_items_html += build_pagination_html(page_num, total_pages, base_url_for_pagination)
 
-                page_title = f"{current_output_subdir if current_output_subdir else 'Ana'} Dizin"
-                if total_pages > 1:
-                    page_title += f" (Sayfa {page_num})"
+                # Sayfa başlığını burada belirliyoruz. Bu başlık <title> etiketinde görünecek.
+                page_title_for_html_tag = f"{dir_display_name} (Sayfa {page_num})"
                 
-                index_html = generate_html_page(page_title, index_items_html, base_url=base_url_for_pagination)
+                index_html = generate_html_page(page_title_for_html_tag, index_items_html, base_url=base_url_for_pagination)
 
                 os.makedirs(os.path.dirname(index_output_path), exist_ok=True)
                 with open(index_output_path, "w", encoding="utf-8") as f:
