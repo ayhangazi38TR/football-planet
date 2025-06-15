@@ -1,7 +1,4 @@
 # Neler Yeni?
-## v1.31
-* Stadyum menü bağlantısı düzeltildi.
-
 ## v1.30
 * `layout.html` dosyasındaki mobil sorunları giderildi.
 * **FontAwesome** simge seti yerine **Bootstrap Icons** simge setine geçildi.
